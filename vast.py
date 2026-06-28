@@ -191,6 +191,26 @@ def get_default_disk() -> int:
     return config.get("default_disk") or 20
 
 
+def fetch_official_templates() -> list:
+    """从 vast.ai 拉取官方推荐镜像列表"""
+    import urllib.parse
+    filters = json.dumps({"recommended": {"eq": True}})
+    data = api_get("/template/", params={"select_filters": filters, "limit": 100})
+    if data is None:
+        return []
+    templates = data.get("templates") or []
+    # 去重：按 image 字段
+    seen = set()
+    result = []
+    for t in templates:
+        img = t.get("image") or ""
+        name = t.get("name") or img
+        if img and img not in seen:
+            seen.add(img)
+            result.append({"name": name, "image": img})
+    return result
+
+
 def manage_images():
     """管理默认镜像"""
     print("\n=== 管理默认镜像 ===")
@@ -211,24 +231,59 @@ def manage_images():
         else:
             print("  （无）")
         hr()
-        print("  [a] 添加镜像")
-        print("  [d] 删除镜像")
-        print("  [s] 设为默认")
-        print("  [k] 修改默认磁盘大小")
+        print("  [1] 从官方镜像列表选择并设为默认")
+        print("  [2] 手动输入镜像地址并添加")
+        print("  [3] 删除已保存镜像")
+        print("  [4] 修改默认磁盘大小")
         print("  [0] 返回")
 
         op = input("选择操作: ").strip().lower()
 
         if op == "0":
             break
-        elif op == "a":
+
+        elif op == "1":
+            print("\n正在获取官方镜像列表...")
+            templates = fetch_official_templates()
+            if not templates:
+                print("获取失败，请检查网络或 API Key。")
+                continue
+            print(f"\n找到 {len(templates)} 个官方推荐镜像：")
+            hr()
+            for i, t in enumerate(templates, 1):
+                marker = " [当前默认]" if t["image"] == default_image else ""
+                print(f"  [{i}] {t['name']}")
+                print(f"       {t['image']}{marker}")
+            hr()
+            v = input("输入编号设为默认（回车取消）: ").strip()
+            if v.isdigit() and 1 <= int(v) <= len(templates):
+                chosen = templates[int(v) - 1]["image"]
+                if chosen not in images:
+                    images.append(chosen)
+                config["images"] = images
+                config["default_image"] = chosen
+                default_image = chosen
+                save_config(config)
+                print(f"已设为默认: {chosen}")
+
+        elif op == "2":
             img = input("输入镜像地址（如 pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime）: ").strip()
             if img and img not in images:
                 images.append(img)
                 config["images"] = images
                 save_config(config)
                 print("已添加。")
-        elif op == "d":
+            v = input("是否设为默认？(y/n): ").strip().lower()
+            if v == "y" and img:
+                config["default_image"] = img
+                default_image = img
+                save_config(config)
+                print("已设为默认。")
+
+        elif op == "3":
+            if not images:
+                print("没有已保存的镜像。")
+                continue
             v = input("输入要删除的编号: ").strip()
             if v.isdigit() and 1 <= int(v) <= len(images):
                 removed = images.pop(int(v) - 1)
@@ -238,17 +293,8 @@ def manage_images():
                     default_image = config["default_image"]
                 save_config(config)
                 print(f"已删除: {removed}")
-        elif op == "s":
-            if not images:
-                print("请先添加镜像。")
-                continue
-            v = input("输入要设为默认的编号: ").strip()
-            if v.isdigit() and 1 <= int(v) <= len(images):
-                config["default_image"] = images[int(v) - 1]
-                default_image = config["default_image"]
-                save_config(config)
-                print("已设为默认。")
-        elif op == "k":
+
+        elif op == "4":
             v = input(f"输入默认磁盘大小（GB，当前 {default_disk}）: ").strip()
             try:
                 config["default_disk"] = int(v)
