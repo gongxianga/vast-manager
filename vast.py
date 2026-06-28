@@ -163,21 +163,22 @@ def print_instance(idx: int, inst: dict):
 # ─── 功能模块 ─────────────────────────────────────────────────────────────────
 
 def search_offers(gpu_name: str = "") -> list:
-    """搜索可用机器"""
+    """搜索可用机器（拉取全部后本地过滤）"""
     query = {
         "verified": {"eq": True},
         "rentable": {"eq": True},
         "type": "on-demand",
         "order": [["dph_total", "asc"]],
-        "limit": 200,
+        "limit": 500,
     }
-    if gpu_name:
-        query["gpu_name"] = {"ilike": f"%{gpu_name}%"}
-
     data = api_post("/bundles/", body=query)
     if data is None:
         return []
-    return data.get("offers") or []
+    offers = data.get("offers") or []
+    if gpu_name:
+        keyword = gpu_name.lower().replace(" ", "")
+        offers = [o for o in offers if keyword in (o.get("gpu_name") or "").lower().replace(" ", "")]
+    return offers
 
 
 def list_available():
