@@ -181,31 +181,86 @@ def search_offers(gpu_name: str = "") -> list:
     return offers
 
 
-def list_available():
-    """查看可用机器"""
-    print("\n=== 查看可用机器 ===")
+def get_default_image() -> str:
+    config = load_config()
+    return config.get("default_image") or "pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime"
+
+
+def get_default_disk() -> int:
+    config = load_config()
+    return config.get("default_disk") or 20
+
+
+def manage_images():
+    """管理默认镜像"""
+    print("\n=== 管理默认镜像 ===")
     hr()
+    config = load_config()
+    images = config.get("images") or []
+    default_image = config.get("default_image") or "pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime"
+    default_disk = config.get("default_disk") or 20
 
-    gpu_name = input("搜索 GPU 型号（如 RTX4090、A100、H100，直接回车显示全部）: ").strip()
+    while True:
+        print(f"\n当前默认镜像: {default_image}")
+        print(f"当前默认磁盘: {default_disk} GB")
+        print("\n已保存的镜像：")
+        if images:
+            for i, img in enumerate(images, 1):
+                marker = " [默认]" if img == default_image else ""
+                print(f"  [{i}] {img}{marker}")
+        else:
+            print("  （无）")
+        hr()
+        print("  [a] 添加镜像")
+        print("  [d] 删除镜像")
+        print("  [s] 设为默认")
+        print("  [k] 修改默认磁盘大小")
+        print("  [0] 返回")
 
-    print("\n查询中...")
-    offers = search_offers(gpu_name)
+        op = input("选择操作: ").strip().lower()
 
-    if not offers:
-        print("没有找到可用机器。")
-        pause()
-        return
-
-    print(f"\n找到 {len(offers)} 台可用机器（按价格排序）：")
-    hr()
-    for i, o in enumerate(offers, 1):
-        print_offer(i, o)
-    hr()
-    pause()
+        if op == "0":
+            break
+        elif op == "a":
+            img = input("输入镜像地址（如 pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime）: ").strip()
+            if img and img not in images:
+                images.append(img)
+                config["images"] = images
+                save_config(config)
+                print("已添加。")
+        elif op == "d":
+            v = input("输入要删除的编号: ").strip()
+            if v.isdigit() and 1 <= int(v) <= len(images):
+                removed = images.pop(int(v) - 1)
+                config["images"] = images
+                if config.get("default_image") == removed:
+                    config["default_image"] = images[0] if images else ""
+                    default_image = config["default_image"]
+                save_config(config)
+                print(f"已删除: {removed}")
+        elif op == "s":
+            if not images:
+                print("请先添加镜像。")
+                continue
+            v = input("输入要设为默认的编号: ").strip()
+            if v.isdigit() and 1 <= int(v) <= len(images):
+                config["default_image"] = images[int(v) - 1]
+                default_image = config["default_image"]
+                save_config(config)
+                print("已设为默认。")
+        elif op == "k":
+            v = input(f"输入默认磁盘大小（GB，当前 {default_disk}）: ").strip()
+            try:
+                config["default_disk"] = int(v)
+                default_disk = config["default_disk"]
+                save_config(config)
+                print("已更新。")
+            except ValueError:
+                print("请输入数字。")
 
 
 def rent_machine():
-    """租用机器"""
+    """搜索并租用机器"""
     print("\n=== 租用机器 ===")
     hr()
 
@@ -219,7 +274,7 @@ def rent_machine():
         pause()
         return
 
-    print(f"\n找到 {len(offers)} 台可用机器：")
+    print(f"\n找到 {len(offers)} 台可用机器（按价格排序）：")
     hr()
     for i, o in enumerate(offers, 1):
         print_offer(i, o)
@@ -239,33 +294,53 @@ def rent_machine():
     print(f"\n已选择: {fmt_gpu(offer)}  价格: {fmt_price(offer)}")
     hr()
 
-    print("设置租用参数：")
-    image = input("Docker 镜像（默认: pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime）: ").strip()
-    if not image:
-        image = "pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime"
-    disk = input("磁盘空间（GB，默认: 20）: ").strip()
+    # 镜像选择
+    default_image = get_default_image()
+    default_disk = get_default_disk()
+    config = load_config()
+    images = config.get("images") or []
+
+    print("选择 Docker 镜像：")
+    print(f"  [0] 使用默认: {default_image}")
+    for i, img in enumerate(images, 1):
+        print(f"  [{i}] {img}")
+    print(f"  [m] 手动输入")
+
+    img_choice = input("选择（直接回车使用默认）: ").strip().lower()
+    if not img_choice or img_choice == "0":
+        image = default_image
+    elif img_choice == "m":
+        image = input("输入镜像地址: ").strip() or default_image
+    elif img_choice.isdigit() and 1 <= int(img_choice) <= len(images):
+        image = images[int(img_choice) - 1]
+    else:
+        image = default_image
+
+    disk = input(f"磁盘空间（GB，默认 {default_disk}）: ").strip()
     try:
-        disk = int(disk) if disk else 20
+        disk = int(disk) if disk else default_disk
     except ValueError:
-        disk = 20
+        disk = default_disk
+
     onstart = input("启动命令（可选，回车跳过）: ").strip()
 
-    body = {"image": image, "disk": disk}
-    if onstart:
-        body["onstart"] = onstart
-
-    confirm = input(f"\n确认租用？(y/n): ").strip().lower()
+    print(f"\n镜像: {image}  磁盘: {disk}GB")
+    confirm = input("确认租用？(y/n): ").strip().lower()
     if confirm != "y":
         print("已取消。")
         pause()
         return
+
+    body = {"image": image, "disk": disk}
+    if onstart:
+        body["onstart"] = onstart
 
     print("发送租用请求...")
     result = api_put(f"/asks/{offer_id}/", body)
     if result and result.get("success"):
         instance_id = result.get("new_contract")
         print(f"\n租用成功！实例 ID: {instance_id}")
-        print("实例正在启动，可在 [3] 查看我的实例 中查看状态。")
+        print("实例正在启动，可在 [2] 查看我的实例 中查看状态。")
     elif result:
         print(f"\n响应: {json.dumps(result, ensure_ascii=False, indent=2)}")
     pause()
@@ -404,10 +479,10 @@ def main():
         print("╔══════════════════════════════════╗")
         print("║     Vast.ai GPU 租用管理工具      ║")
         print("╠══════════════════════════════════╣")
-        print("║  [1] 查看可用机器                 ║")
-        print("║  [2] 租用机器                     ║")
-        print("║  [3] 查看我的实例                 ║")
-        print("║  [4] 管理实例（停止/删除）        ║")
+        print("║  [1] 搜索并租用机器               ║")
+        print("║  [2] 查看我的实例                 ║")
+        print("║  [3] 管理实例（停止/删除）        ║")
+        print("║  [4] 管理默认镜像                 ║")
         print("║  [5] 修改 API Key                 ║")
         print("║  [6] 更新程序                     ║")
         print("║  [0] 退出                         ║")
@@ -416,13 +491,13 @@ def main():
         choice = input("请选择: ").strip()
 
         if choice == "1":
-            list_available()
-        elif choice == "2":
             rent_machine()
-        elif choice == "3":
+        elif choice == "2":
             list_my_instances()
-        elif choice == "4":
+        elif choice == "3":
             manage_instance()
+        elif choice == "4":
+            manage_images()
         elif choice == "5":
             set_api_key()
         elif choice == "6":
